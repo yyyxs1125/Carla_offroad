@@ -649,6 +649,37 @@ class CarlaEnv(object):
         self.video_writer.release()
 
     def render(self, image_type='visual', blend=False, save=False, model=None, step=0):
+        """
+        Renders the current frame of the simulation.
+
+        Args:
+            image_type (str): The type of image to render. Defaults to 'visual'. 
+                              If `_render_gcam` is True, this is overridden to 'rgb'.
+            blend (bool): If True, applies transparency to the rendered image. Defaults to False.
+            save (bool): If True, saves the rendered image to disk. Defaults to False.
+            model (str): The name of the model used for saving images. Required if `save` is True.
+            step (int): The current step number, used for naming saved images. Defaults to 0.
+
+        Behavior:
+            - If `_render_gcam` is True, the image type is set to 'rgb' and Grad-CAM visualization is applied.
+            - If `_render` is True:
+                - The frame rate is managed using `self.clock.tick()`.
+                - The image is extracted from `self.observation` and processed into a NumPy array.
+                - If `_render_gcam` is True, Grad-CAM visualization is applied to the image.
+                - If `_record` is True, the frame is written to a video file.
+                - The processed image is converted to a Pygame surface and optionally saved to disk.
+                - If `blend` is True, transparency is applied to the image surface.
+                - The image surface is displayed on the Pygame window.
+            - If `_render` is False, the method does nothing.
+
+        Raises:
+            FileNotFoundError: If the directory for saving images does not exist and cannot be created.
+            ValueError: If `save` is True but `model` is not provided.
+
+        Note:
+            - The method assumes that `self.observation` contains image data in a specific format.
+            - The saved images are named using zero-padded step numbers.
+        """
         if self._render_gcam:
             image_type = 'rgb'
 
@@ -878,12 +909,11 @@ def measurement_to_image(state):
     return img_
 
 def main():
-    env = CarlaEnv(log_dir='./erase.txt', data_dir=None)
-    
-    try:
-        
-        state = env.reset()
 
+    env = CarlaEnv(log_dir='./erase.txt', data_dir=None)
+
+    try:
+        state = env.reset()
         while True:
             env.render()
             # if you want to use random action sample - action size will be 3
@@ -901,12 +931,12 @@ def main():
                     error
             """
             state, reward, done, epinfos = env.step(action)
-            
             if done:
                 state = env.reset()
+
     finally:
         env.close()
         print('done')
-
+        
 if __name__ == '__main__':
     main()
