@@ -581,6 +581,23 @@ class CarlaEnv(object):
         return reward, done
 
     def get_sensor_observation(self):
+        """
+        Generates a sensor observation based on the current state of the environment.
+
+        This method computes a set of features that represent the current state of the 
+        vehicle and its surroundings, including speed, steering labels, heading difference, 
+        distance from the center of the track, and track width.
+
+        Returns:
+            np.ndarray: A numpy array containing the following elements:
+                - Normalized speed (speed / 4).
+                - A list of steering labels, calculated as the transformed y-component of 
+                  the vector from the vehicle's current location to the next waypoints.
+                - Normalized absolute difference between the waypoints' heading and the 
+                  vehicle's current heading (scaled by 180 degrees).
+                - Normalized distance from the center of the track (distance_from_center / 2).
+                - Normalized track width (track_width / 2).
+        """
         # path_idx = random.randint(0, len(self.epinfos["paths"])-1)
         path_idx = 0
 
@@ -802,7 +819,8 @@ class CarlaEnv(object):
             ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
             'Camera Semantic Segmentation (CityScapes Palette)'],
             ['sensor.lidar.ray_cast', None, 'Lidar (Ray-Cast)']]
-
+            # ['sensor.lidar', cc.Raw, 'Lidar (Ray-Cast)']]
+# 
         camera_transform = carla.Transform(carla.Location(x=2.0, z=1.7), carla.Rotation())
         # for visualize
         render_camera_transform = carla.Transform(carla.Location(x=-8, z=6), carla.Rotation(pitch=8.0))

@@ -1,11 +1,11 @@
 
-SAVE_PATH = '/data/dataset1'
+SAVE_PATH = './data/dataset1'
 
 DISPLAY_WIDTH = 640
 DISPLAY_HEIGHT = 480
 
-WIDTH = 160
-HEIGHT = 120
+WIDTH = 1200
+HEIGHT = 1080
 HOST = '0.0.0.0'
 PORT = 2000
 

@@ -47,6 +47,7 @@ import socket
 import common.const as const
 s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 r = s.connect_ex((const.HOST, const.PORT))
+
 s.close()
 
 import glob
@@ -200,6 +201,29 @@ class World(object):
         self._controller = controller
 
     def restart(self):
+        """
+        Restart the simulation environment by resetting the player, sensors, and camera configurations.
+
+        This method performs the following steps:
+        1. Retains the current camera configuration if a camera manager exists.
+        2. Selects a random blueprint for the player actor and sets its attributes such as role name, color, driver ID, 
+           and invincibility (if applicable).
+        3. Spawns the player actor at a predefined spawn point. If the player already exists, it is destroyed and respawned.
+        4. Initializes the collision sensor and camera manager for the player.
+        5. Configures the camera manager with the retained or default camera position and recording settings.
+        6. Displays a notification with the actor type of the player.
+
+        Attributes:
+            cam_index (int): Index of the current camera configuration, defaulting to 0 if no camera manager exists.
+            record_cam_index (list): Indices of cameras to be used for recording.
+            cam_pos_index (int): Index of the camera position, defaulting to 3 if no camera manager exists.
+            blueprint (carla.ActorBlueprint): Randomly selected blueprint for the player actor.
+            spawn_point (carla.Transform): Predefined spawn point for the player actor.
+            actor_type (str): Display name of the player actor.
+
+        Raises:
+            RuntimeError: If the player actor cannot be spawned after multiple attempts.
+        """
         #self.world.apply_settings(carla.WorldSettings(synchronous_mode=True,fixed_delta_seconds=60,no_rendering_mode=True))
         # Keep same camera config if the camera manager exists.
         cam_index = self.camera_manager.index if self.camera_manager is not None else 0
@@ -216,6 +240,8 @@ class World(object):
             blueprint.set_attribute('driver_id', driver_id)
         if blueprint.has_attribute('is_invincible'):
             blueprint.set_attribute('is_invincible', 'true')
+        print("Spawned vehicle blueprint ID:", blueprint.id)
+
         # Spawn the player.
         if self.player is not None:
             spawn_point = self.env_init_pos[self.env_name][0]
@@ -224,6 +250,8 @@ class World(object):
         while self.player is None:
             spawn_point = self.env_init_pos[self.env_name][0]
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
+        print("Spawn point:", spawn_point)
+  
         # Set up the sensors.
         self.collision_sensor = CollisionSensor(self.player, self.hud)
         self.camera_manager = CameraManager(self.player, self.hud, self._gamma)
@@ -247,9 +275,7 @@ class World(object):
         if self.replaying is False:
             if save_iter % 5 == 0:
                 if self.recording_customize_enabled:
-                    # 이미지 정보들을 저장
                     self.camera_manager.save(clock)
-                    # 차량의 상태 정보를 저장
                     self.hud.save(self, clock, ofd)
                     return clock + 1
             return clock
@@ -291,6 +317,40 @@ class World(object):
 
 
 class KeyboardControl(object):
+    """
+    KeyboardControl class provides keyboard-based control for a player in a CARLA simulation environment.
+
+    This class handles user input via keyboard to control a vehicle or a walker in the simulation. It also provides
+    functionality for toggling autopilot, recording, replaying, and other simulation-related features.
+
+    Attributes:
+        world (object): The simulation world object.
+        recording (bool): Indicates whether recording is currently active.
+        replaying (bool): Indicates whether replaying is currently active.
+        _autopilot_enabled (bool): Indicates whether autopilot is enabled.
+        _control (object): Control object for the player (VehicleControl or WalkerControl).
+        _steer_cache (float): Cached steering value for smooth steering.
+        _rotation (object): Rotation of the walker (used for WalkerControl).
+
+    Methods:
+        __init__(world, start_in_autopilot):
+            Initializes the KeyboardControl instance with the given world and autopilot state.
+
+        parse_events(client, world, clock):
+            Parses keyboard events and updates the simulation state accordingly.
+
+        _parse_vehicle_keys(keys, milliseconds):
+            Handles keyboard input for controlling a vehicle.
+
+        _parse_walker_keys(keys, milliseconds):
+            Handles keyboard input for controlling a walker.
+
+        get_action():
+            Returns the current control action as a dictionary containing 'steer', 'throttle', and 'brake'.
+
+        _is_quit_shortcut(key):
+            Static method to check if the given key is a quit shortcut (ESC or Ctrl+Q).
+    """
     def __init__(self, world, start_in_autopilot):
         self.world = world
         self.recording = False
@@ -532,6 +592,38 @@ class PredifinedControl(object):
 
 
 class HUD(object):
+    """
+    Heads-Up Display (HUD) class for rendering and managing on-screen information 
+    in a simulation environment.
+    Attributes:
+        dim (tuple): Dimensions of the display (width, height).
+        server_fps (float): Frames per second of the server.
+        frame (int): Current frame number.
+        simulation_time (float): Elapsed simulation time in seconds.
+        _show_info (bool): Flag to toggle the display of information.
+        _info_text (list): List of information strings to display.
+        _server_clock (pygame.time.Clock): Clock to track server FPS.
+        _font_mono (pygame.font.Font): Monospaced font for rendering text.
+        _notifications (FadingText): Object for managing fading text notifications.
+        help (HelpText): Object for rendering help text.
+    Methods:
+        __init__(width, height):
+            Initializes the HUD with the given dimensions.
+        on_world_tick(timestamp):
+            Updates server FPS, frame number, and simulation time based on the world tick.
+        save(world, clock, ofd):
+            Saves vehicle control and state information to a file.
+        tick(world, clock):
+            Updates HUD information based on the world state and clock.
+        toggle_info():
+            Toggles the display of HUD information.
+        notification(text, seconds=2.0):
+            Displays a temporary notification on the HUD.
+        error(text):
+            Displays an error message on the HUD.
+        render(display):
+            Renders the HUD information and notifications onto the given display surface.
+    """
     def __init__(self, width, height):
         self.dim = (width, height)
         font = pygame.font.Font(pygame.font.get_default_font(), 20)
@@ -734,6 +826,25 @@ class HelpText(object):
 
 
 class CollisionSensor(object):
+    """
+    A sensor class to detect and handle collision events in a simulation.
+
+    Attributes:
+        sensor (carla.Actor): The collision sensor actor attached to the parent actor.
+        history (list): A list of tuples containing collision frame and intensity.
+        _parent (carla.Actor): The parent actor to which the collision sensor is attached.
+        hud (HUD): The HUD object used to display notifications.
+
+    Methods:
+        __init__(parent_actor, hud):
+            Initializes the CollisionSensor, attaches it to the parent actor, and sets up a listener for collision events.
+
+        get_collision_history():
+            Retrieves the collision history as a dictionary with frame numbers as keys and intensity as values.
+
+        _on_collision(weak_self, event):
+            Handles collision events, updates the collision history, and displays a notification on the HUD.
+    """
     def __init__(self, parent_actor, hud):
         self.sensor = None
         self.history = []
@@ -870,6 +981,7 @@ class CameraManager(object):
         self.sensor = None
         self.record_sensor = []
         self.record_image = [None, None]
+        self.record_points = None
         self.surface = None
         self._parent = parent_actor
         self.hud = hud
@@ -883,17 +995,27 @@ class CameraManager(object):
             (carla.Transform(carla.Location(x=5.5, y=1.5, z=1.5)), Attachment.SpringArm),
             (carla.Transform(carla.Location(x=-8.0, z=6.0), carla.Rotation(pitch=6.0)), Attachment.SpringArm),
             (carla.Transform(carla.Location(x=-1, y=-bound_y, z=0.5)), Attachment.Rigid)]
+        #    ↑ Z (Up)
+        #    |
+        #    |
+        #    o------> X (Right)
+        #    |
+        #    |
+        #  Forward (Y)
+
         self._record_camera_transforms = [
-            (carla.Transform(carla.Location(x=2.0, z=1.7), carla.Rotation()), Attachment.Rigid),
-            (carla.Transform(carla.Location(x=-2.5, z=1.7), carla.Rotation()), Attachment.Rigid)]
+            (carla.Transform(carla.Location(x=1.5, y=0.0, z=2.3), carla.Rotation()), Attachment.Rigid),
+            (carla.Transform(carla.Location(x=0.0, y=0.0, z=2.6), carla.Rotation()), Attachment.Rigid)]
         
         self.transform_index = 1
         self.record_transform_index = 0
         self.sensors = [
             ['sensor.camera.rgb', cc.Raw, 'Camera RGB'],
             ['sensor.camera.depth', cc.Raw, 'Camera Depth (Raw)'],
-            ['sensor.camera.depth', cc.Depth, 'Camera Depth (Gray Scale)'],
-            ['sensor.camera.depth', cc.LogarithmicDepth, 'Camera Depth (Logarithmic Gray Scale)']]
+            # ['sensor.camera.depth', cc.Depth, 'Camera Depth (Gray Scale)'],
+            ['sensor.camera.depth', cc.LogarithmicDepth, 'Camera Depth (Logarithmic Gray Scale)'],
+            ['sensor.lidar.ray_cast', None, 'Lidar (Ray-Cast)']]
+            # ['sensor.lidar.ray_cast_semantic', 'Semantic LiDAR']]
 
         world = self._parent.get_world()
         bp_library = world.get_blueprint_library()
@@ -902,11 +1024,23 @@ class CameraManager(object):
             if item[0].startswith('sensor.camera'):
                 bp.set_attribute('image_size_x', str(hud.dim[0]))
                 bp.set_attribute('image_size_y', str(hud.dim[1]))
-                bp.set_attribute('fov','100')
+                bp.set_attribute('fov','90')
                 if bp.has_attribute('gamma'):
                     bp.set_attribute('gamma', str(gamma_correction))
+                bp.set_attribute('sensor_tick', '0.1')
             elif item[0].startswith('sensor.lidar'):
-                bp.set_attribute('range', '5000')
+                bp.set_attribute('range', '1000.0')  # Typical for OS1-64
+                bp.set_attribute('rotation_frequency', '20.0')  # Matches Ouster's supported RPM
+                bp.set_attribute('channels', '64')  # OS1-64 has 64 channels
+                bp.set_attribute('points_per_second', '1310720')  # 20Hz * 65536 points/sec
+
+                # Ouster OS1-64 has a vertical FoV of about 45°
+                bp.set_attribute('upper_fov', '22.5')   # Half of 45°
+                bp.set_attribute('lower_fov', '-22.5')  # Half of -45°
+
+                bp.set_attribute('sensor_tick', '0.1')  # 10hz
+
+
             item.append(bp)
         self.index = None
         self.record_index = [None, None]
@@ -916,25 +1050,63 @@ class CameraManager(object):
         self.set_sensor(self.index, notify=False, force_respawn=True)
 
     def set_record_sensor(self, index_list, force_respawn=False):
+        """
+        Configures and spawns the recording sensors based on the provided index list.
+        This method checks if the recording sensors need to be respawned based on the 
+        provided indices or a forced respawn flag. If respawn is required, it destroys 
+        the existing recording sensors and spawns new ones at the specified transforms. 
+        The new sensors are then set up to listen for image data.
+        Args:
+            index_list (list): A list of two indices specifying the sensors to be used 
+                               for recording.
+            force_respawn (bool, optional): If True, forces the respawn of the recording 
+                                            sensors regardless of their current state. 
+                                            Defaults to False.
+        Behavior:
+            - If the recording sensors need to be respawned:
+                - Destroys any existing recording sensors.
+                - Spawns new sensors based on the provided indices and attaches them 
+                  to the parent actor.
+                - Sets up listeners for the new sensors to process image data.
+            - Updates the `record_index` attribute with the provided indices.
+        """
         needs_respawn = True if (self.record_index[0] is None and self.record_index[1] is None) else \
             (force_respawn or self.sensors[index_list[0]][0] != self.sensors[self.record_index[0]][0] and self.sensors[index_list[1]][0] != self.sensors[self.record_index[1]][0])
-        
+        # print("needs_respawn: ", needs_respawn)
+        # print("record_index: ", self.record_index)
+        # print("index_list: ", index_list)
+
         if needs_respawn:
             if len(self.record_sensor) != 0:
                 for sensor in self.record_sensor:
                     sensor.destroy()    
 
             for i in range(2):
+                # rsensor = self._parent.get_world().spawn_actor(
+                #     self.sensors[index_list[i]][-1],
+                #     self._record_camera_transforms[self.record_transform_index][0],
+                #     attach_to = self._parent,
+                #     attachment_type= self._record_camera_transforms[self.record_transform_index][1])
+                # print(self.record_transform_index)
+                # print(self._record_camera_transforms[self.record_transform_index])
+                # print(self._record_camera_transforms[self.record_transform_index])
+
                 rsensor = self._parent.get_world().spawn_actor(
                     self.sensors[index_list[i]][-1],
-                    self._record_camera_transforms[self.record_transform_index][0],
-                    attach_to = self._parent,
-                    attachment_type= self._record_camera_transforms[self.record_transform_index][1])
+                    self._record_camera_transforms[i][0],
+                    attach_to=self._parent,
+                    attachment_type=self._record_camera_transforms[i][1])
+
+                print(self._record_camera_transforms[i][0])
+                print(self._record_camera_transforms[i][1])
+
+
                 self.record_sensor.append(rsensor)
             weak_self = weakref.ref(self)
             self.record_sensor[0].listen(lambda image: CameraManager._parse_record_image(weak_self, image, 0))
             self.record_sensor[1].listen(lambda image: CameraManager._parse_record_image(weak_self, image, 1))
         self.record_index = index_list
+     
     
     def set_sensor(self, index, notify=True, force_respawn=False):
         index = index % len(self.sensors)
@@ -971,33 +1143,213 @@ class CameraManager(object):
     def save(self, clock):
         # image save to disk
         # if self.recording:
+        # print(self.record_image[0], self.record_image[1])
         if self.record_image[0] is not None and self.record_image[1] is not None:
-            self.record_image[0].save_to_disk(os.path.join(const.SAVE_PATH, 'rgb_%08d' % clock))
+            self.record_image[0].save_to_disk(os.path.join(const.SAVE_PATH, 'RGB','rgb_%08d' % clock))
+            self.record_image[1].save(os.path.join(const.SAVE_PATH, 'lidar_pc','lidar_%08d.png' % clock))
+        if self.record_points is not None:
+            np.save(os.path.join(const.SAVE_PATH, 'points', 'points_%08d.npy' % clock), self.record_points)
             # self.record_image[1].save_to_disk(os.path.join(const.SAVE_PATH, 'depth_%08d' % clock))
+    
 
     @staticmethod
+    def _get_transform_matrix(transform: carla.Transform):
+        """Convert CARLA transform to 4x4 matrix"""
+        rotation = transform.rotation
+        location = transform.location
+
+        cy, sy = np.cos(np.radians(rotation.yaw)), np.sin(np.radians(rotation.yaw))
+        cp, sp = np.cos(np.radians(rotation.pitch)), np.sin(np.radians(rotation.pitch))
+        cr, sr = np.cos(np.radians(rotation.roll)), np.sin(np.radians(rotation.roll))
+
+        matrix = np.identity(4)
+        matrix[0, 3] = location.x
+        matrix[1, 3] = location.y
+        matrix[2, 3] = location.z
+
+        matrix[0, 0] = cp * cy
+        matrix[0, 1] = cy * sp * sr - sy * cr
+        matrix[0, 2] = -cy * sp * cr - sy * sr
+
+        matrix[1, 0] = cp * sy
+        matrix[1, 1] = sy * sp * sr + cy * cr
+        matrix[1, 2] = -sy * sp * cr + cy * sr
+
+        matrix[2, 0] = -sp
+        matrix[2, 1] = cp * sr
+        matrix[2, 2] = cp * cr
+
+        return matrix
+    def _camera_to_standard_coords(cam_coords):
+        """
+        Convert from custom Camera-style XYZ (X right, Y backward, Z down)
+        to standard Camera-style XYZ (X right, Y down, Z forward)
+        """
+        cam2std = np.array([
+            [1,  0,  0],   # X stays the same
+            [0,  0,  1],   # Y = Z
+            [0, -1,  0]    # Z = -Y
+        ])
+        return cam_coords @ cam2std.T
+
+
     def _parse_record_image(weak_self, image, index):
+        from mpl_toolkits.mplot3d import Axes3D  # Needed for 3D plot
+        import matplotlib.pyplot as plt
         self = weak_self()
         if not self:
             return
-
+        lidar_data = None
+        
         if self.sensors[self.record_index[index]][0].startswith('sensor.lidar'):
-            pass
+            # print("Sensor name:", self.sensors[self.record_index[index]][0])
+            print("Raw data length (bytes):", len(image.raw_data))
+            lidar_data = np.frombuffer(image.raw_data, dtype=np.float32).reshape(-1, 3).copy()
+            # print(f"LiDAR data shape: {lidar_data.shape}")
+            # np.save("/home/yixin/Off-road-Benchmark/data/dataset1/lidar_points.npy", lidar_data)
+            
+            sensor_l = self.record_sensor[index]
+            sensor_c = self.record_sensor[index-1]
+
+            # Reorder columns: from [x, y, z] → [z, x, y]
+            # lidar_data = lidar_data[:, [2, 1, 0]]
+            lidar_transform= sensor_l.get_transform()
+            camera_transform = sensor_c.get_transform()
+
+            # print(f"LiDAR Transform: {lidar_transform}")
+            # print(f"Camera Transform: {camera_transform}")
+        
+            # lidar_data *= 5.0  # scale to [-50, 50] → total spread ~100m
+            lidar_matrix = CameraManager._get_transform_matrix(lidar_transform)
+            camera_matrix =CameraManager._get_transform_matrix(camera_transform)
+
+            lidar_to_camera = np.linalg.inv(camera_matrix) @ lidar_matrix
+            # print(lidar_to_camera)
+            lidar_xyz = lidar_data[:, :3]
+            lidar_points_hom = np.concatenate([lidar_xyz, np.ones((lidar_xyz.shape[0], 1))], axis=1)
+
+            points_camera = (lidar_to_camera @ lidar_points_hom.T).T[:, :3]
+            # np.save("/home/yixin/Off-road-Benchmark/data/dataset1/points_camera.npy", points_camera)
+
+            # X right, Y up, Z forward
+            points_camera_fixed = CameraManager._camera_to_standard_coords(points_camera)
+            # Filter once
+            valid = points_camera_fixed[:, 2] > 0
+            points_camera = points_camera_fixed[valid]
+            depth = points_camera_fixed[:, 2]
+            # np.save("/home/yixin/Off-road-Benchmark/data/dataset1/points_camera1.npy", points_camera)
+
+            print(f"LiDAR points projected into camera frame: {points_camera.shape[0]}")
+            print(f"Depth range: {depth.min():.2f} to {depth.max():.2f}")
+
+            # return
+            
+
+            image_w = int(1200)
+            image_h = int(1080)
+            fov = float(90)
+            camera_image = np.zeros((image_h, image_w, 3), dtype=np.uint8)
+
+            focal = image_w / (2.0 * np.tan(np.radians(fov / 2.0)))
+            K = np.array([
+                [focal, 0, image_w / 2.0],
+                [0, focal, image_h / 2.0],
+                [0,     0,           1.0]
+            ])
+
+            # print(K)
+            # Project
+            points_2d = (K @ points_camera_fixed[:, :3].T).T
+            points_2d[:, 0] /= points_2d[:, 2]
+            points_2d[:, 1] /= points_2d[:, 2]
+            x_min, x_max = points_2d[:, 0].min(), points_2d[:, 0].max()
+            y_min, y_max = points_2d[:, 1].min(), points_2d[:, 1].max()
+            d_min, d_max = depth.min(), depth.max()
+
+            # print(f"➤ X range: {x_min:.2f} to {x_max:.2f}")
+            # print(f"➤ Y range: {y_min:.2f} to {y_max:.2f}")
+            # print(f"➤ Depth range: {d_min:.2f} to {d_max:.2f}")
+
+            # print(f"points 2d after projection: {points_2d.shape[0]}")
+            # print("➤ Projected points (image space):", points_2d.shape)
+            # print("➤ Depth values:", depth.shape)
+            # print("➤ depth > 0:", np.sum(depth > 0))
+            # print(f"➤ X valid:", np.sum((points_2d[:, 0] >= 0) & (points_2d[:, 0] < image_w)))
+            # print("➤ Y valid:", np.sum((points_2d[:, 1] >= 0) & (points_2d[:, 1] < image_h)))
+
+            mask = (
+                (points_2d[:, 0] >= 0) & (points_2d[:, 0] < image_w) &
+                (points_2d[:, 1] >= 0) & (points_2d[:, 1] < image_h) &
+                (depth > 0)
+            )
+
+            pixels = points_2d[mask]
+            # print(f"Valid image points after projection: {pixels.shape[0]}")
+            depths = depth[mask]
+
+            # import matplotlib.pyplot as plt
+
+            # Normalize depth to 0–1
+            depth_min = np.percentile(depths, 1)
+            depth_max = np.percentile(depths, 99)
+            depths_clipped = np.clip((depths - depth_min) / (depth_max - depth_min), 0.0, 1.0)
+
+            # Use matplotlib colormap
+            colors = plt.cm.plasma(1.0 - depths_clipped)[:, :3] * 255  # RGB from colormap
+            colors = colors.astype(np.uint8)
+
+            for i in range(pixels.shape[0]):
+                x = int(pixels[i, 0])
+                y = int(pixels[i, 1])
+                color = tuple(colors[i])  # (R, G, B)
+                if 0 <= x < image_w and 0 <= y < image_h:
+                    camera_image[y, x] = color
+
+            # import cv2
+            # cv2.imshow("LiDAR Depth on Camera", camera_image)
+            # cv2.waitKey(0)
+            # cv2.destroyAllWindows()
+            image =  image = Image.fromarray(camera_image)
+          
+
         else:
             image.convert(self.sensors[self.record_index[index]][1])
         self.record_image[index] = image
-        # if self.recording:
-        #     if image.frame % 10 == 0:
-        #         if index == 0:
-        #             sentence = 'rgb'
-        #         else:
-        #             sentence = 'depth'
-        #         image.save_to_disk('dataset/'+sentence+'/%08d' % image.frame)
+        self.record_points = lidar_data
+       
+            # if image.frame % 10 == 0:
+            #     if index == 0:
+            #         sentence = 'rgb'
+            #     else:
+            #         sentence = 'lidar'
+            #     image.save_to_disk('dataset/'+sentence+'/%08d' % image.frame)
                 
             
 
     @staticmethod
     def _parse_image(weak_self, image):
+        """
+        Processes and visualizes image or LiDAR data from a sensor.
+
+        Args:
+            weak_self (weakref): A weak reference to the instance of the class containing this method.
+            image: The image or LiDAR data object to be processed.
+
+        Behavior:
+            - If the sensor is a LiDAR sensor (identified by 'sensor.lidar' in the sensor name):
+                - Converts raw LiDAR data into a 2D point cloud.
+                - Scales and transforms the point cloud to fit the HUD dimensions.
+                - Creates a 2D image representation of the LiDAR data.
+                - Stores the resulting image as a pygame surface in `self.surface`.
+            - If the sensor is a camera:
+                - Converts the image to the appropriate format.
+                - Extracts the RGB channels and flips the color order from BGR to RGB.
+                - Stores the resulting image as a pygame surface in `self.surface`.
+
+        Notes:
+            - The method uses weak references to avoid circular references.
+            - The `self.recording` block is commented out, which would save images to disk if enabled.
+        """
         self = weak_self()
         if not self:
             return
@@ -1033,10 +1385,39 @@ class CameraManager(object):
 
 
 def game_loop(args):
-    # 데이터 셋 저장을 위한 디렉토리 생성 -> dataset1
+    """
+    Main game loop for the off-road benchmark data collection.
+    This function initializes the CARLA simulator, sets up the environment, 
+    and collects data during the simulation. The data is saved to a CSV file 
+    and includes information such as vehicle speed, control inputs, and other 
+    relevant measurements.
+    Args:
+        args: An object containing the following attributes:
+            - host (str): The IP address of the CARLA server.
+            - port (int): The port number of the CARLA server.
+            - env_name (str): The name of the environment to load in CARLA.
+            - width (int): The width of the display window.
+            - height (int): The height of the display window.
+            - autopilot (bool): Whether to enable autopilot for the vehicle.
+    Behavior:
+        - Initializes the CARLA client and connects to the server.
+        - Loads the specified environment and sets the weather to clear noon.
+        - Creates a CSV file to store simulation data.
+        - Runs the simulation loop, where:
+            - Vehicle control inputs are captured.
+            - Data is filtered and saved if certain conditions are met.
+            - The simulation world is updated and rendered.
+        - Stops the simulation after a predefined number of iterations or 
+          when the user exits.
+    Notes:
+        - The function ensures proper cleanup of resources, including stopping 
+          the CARLA recorder and destroying all actors, before exiting.
+        - The simulation runs at a fixed frame rate of 60 FPS.
+    """
+    # create a dataset to save data -> dataset1
     if os.path.exists(const.SAVE_PATH) is not True:
         os.makedirs(const.SAVE_PATH)
-    # 차량관련 정보를 저장하기 위한 csv 파일 생성
+    # Make a CSV file where we can store data like vehicle speed, location, ID,
     ofd = open(os.path.join(const.SAVE_PATH, 'measurements.csv'), 'w', newline='')
     target = {'step': None, 'steer': None, 'throttle': None, 'brake': None, 'speed':None, 'direction': None}
     w = csv.DictWriter(ofd, target.keys())
@@ -1048,11 +1429,14 @@ def game_loop(args):
     count = 0
     step = 0
 
+    os.makedirs(os.path.join(const.SAVE_PATH, 'RGB'), exist_ok=True)
+    os.makedirs(os.path.join(const.SAVE_PATH, 'lidar_pc'), exist_ok=True)
+    os.makedirs(os.path.join(const.SAVE_PATH, 'points'), exist_ok=True)
+
     try:
-        # 클라이언트 생성
         client = carla.Client(args.host, args.port)
         client.set_timeout(2.0)
-        # 날씨는 맑은 날로 고정
+    
         client.load_world(args.env_name)
         client.get_world().set_weather(carla.WeatherParameters.ClearNoon)
 
@@ -1063,8 +1447,6 @@ def game_loop(args):
         hud = HUD(args.width, args.height)
         
         world = World(client.get_world(), hud, args)
-        # args.autopilot : True  차량에이전트 제어를 autopilot 기능이 담당
-        #                  False 차량에이전트 제어를 키보드로 담당
         controller = KeyboardControl(world, args.autopilot)
         
 
@@ -1079,7 +1461,6 @@ def game_loop(args):
             if controller.parse_events(client, world, clock):
                 return
 
-            # 데이터들을 저장
             c = world.player.get_control()
 
             #filter data
